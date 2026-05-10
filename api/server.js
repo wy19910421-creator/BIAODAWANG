@@ -134,72 +134,96 @@ function generateMockResult(text) {
 }
 
 async function analyzeDocumentWithDoubao(text) {
-  try {
-    const response = await fetch(`https://ark.cn-beijing.volces.com/api/v3/bots/${DOUBAO_ENDPOINT_ID}/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${DOUBAO_API_KEY}`
-      },
-      body: JSON.stringify({
-        messages: [
-          {
-            role: 'system',
-            content: '你是一位专业的招投标文件审核专家，擅长发现招标文件中的各类问题。请直接返回JSON格式的检查结果，不要添加任何解释性文字。格式：{"totalErrors":数字,"passRate":数字,"categories":[{"category":"类别名","count":数字,"percentage":数字}],"errors":[{"id":"1","type":"类型","category":"类别","position":{"line":数字,"column":数字},"description":"描述","suggestion":"建议","severity":"high/medium/low","legalBasis":"依据"}]}'
-          },
-          {
-            role: 'user',
-            content: `你是一位专业的招投标文件审核专家。请对以下招投标文件进行全面检查，从6个维度识别问题：
-1. 格式规范检查（字体字号、章节编号、页码、标点符号）
-2. 条款逻辑冲突（前后矛盾、资质要求、付款方式）
-3. 商务合规检查（保证金、投标有效期、签字盖章）
-4. 技术参数检查（规格一致性、设备型号）
-5. 法规合规检查（法规时效性、资质合理性）
-6. 文案低级错误（错别字、标点混用）
+  const endpoints = [
+    `https://ark.cn-beijing.volces.com/api/v3/bots/${DOUBAO_ENDPOINT_ID}/completions`,
+    `https://ark.cn-beijing.volces.com/api/v3/chat/completions`,
+    `https://api.doubao.com/v1/chat/completions`
+  ];
 
-请直接返回JSON格式结果，不要添加任何markdown标记或解释性文字：
-
-文档内容：
-${text.substring(0, 8000)}`
-          }
-        ],
-        temperature: 0.3
-      })
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`豆包API请求失败: ${response.status} - ${errorText}`);
-      throw new Error(`API请求失败 (${response.status})`);
-    }
-
-    const data = await response.json();
-    
-    let content = '';
-    if (data.choices && data.choices[0] && data.choices[0].message) {
-      content = data.choices[0].message.content;
-    } else if (data.choices && data.choices[0] && data.choices[0].text) {
-      content = data.choices[0].text;
-    } else if (typeof data === 'object' && data.content) {
-      content = data.content;
-    } else {
-      console.error('豆包API返回格式异常:', JSON.stringify(data));
-      throw new Error('API返回格式异常');
-    }
-    
+  for (const endpoint of endpoints) {
     try {
-      return JSON.parse(content);
-    } catch {
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        return JSON.parse(jsonMatch[0]);
+      console.log(`尝试调用: ${endpoint}`);
+      
+      const body = endpoint.includes('/bots/') 
+        ? JSON.stringify({
+            messages: [
+              {
+                role: 'system',
+                content: '你是专业的招投标文件审核专家，请直接返回JSON格式检查结果。'
+              },
+              {
+                role: 'user',
+                content: `检查以下文档并返回JSON：${text.substring(0, 3000)}`
+              }
+            ],
+            temperature: 0.3
+          })
+        : JSON.stringify({
+            model: 'doubao-pro-32k',
+            messages: [
+              {
+                role: 'system',
+                content: '你是专业的招投标文件审核专家，请直接返回JSON格式检查结果。'
+              },
+              {
+                role: 'user',
+                content: `检查以下文档并返回JSON：${text.substring(0, 3000)}`
+              }
+            ],
+            temperature: 0.3
+          });
+
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${DOUBAO_API_KEY}`
+        },
+        body: body,
+        timeout: 30000
+      });
+
+      console.log(`HTTP状态码: ${response.status}`);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`API失败: ${response.status} - ${errorText.substring(0, 200)}`);
+        continue;
       }
-      throw new Error('无法解析JSON');
+
+      const data = await response.json();
+      console.log('API返回成功');
+
+      let content = '';
+      if (data.choices && data.choices[0]) {
+        content = data.choices[0].message?.content || data.choices[0].text || '';
+      } else if (data.content) {
+        content = data.content;
+      }
+
+      if (!content) {
+        console.error('返回内容为空');
+        continue;
+      }
+
+      try {
+        return JSON.parse(content);
+      } catch {
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          return JSON.parse(jsonMatch[0]);
+        }
+        console.error('无法解析JSON:', content.substring(0, 100));
+        continue;
+      }
+
+    } catch (error) {
+      console.error(`调用失败 (${endpoint}):`, error.message);
     }
-  } catch (error) {
-    console.error('调用豆包API失败，使用模拟数据:', error.message);
-    return generateMockResult(text);
   }
+
+  console.error('所有端点都失败，使用模拟数据');
+  return generateMockResult(text);
 }
 
 app.post('/api/upload', upload.single('file'), async (req, res) => {
