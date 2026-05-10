@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Upload, File, Trash2, FileText, CheckCircle, AlertCircle, Shield, Brain } from 'lucide-react';
+import { Upload, Trash2, FileText, CheckCircle, AlertCircle, Shield, Brain } from 'lucide-react';
 import { Button } from '@/components/common/Button';
 import { Progress } from '@/components/common/Progress';
 import { useFileStore } from '@/stores/fileStore';
@@ -15,6 +15,8 @@ const ALLOWED_TYPES = [
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   'application/pdf',
 ];
+
+const API_BASE_URL = 'https://dengyue.store/api';
 
 export function UploadPage() {
   const navigate = useNavigate();
@@ -72,7 +74,7 @@ export function UploadPage() {
           const formData = new FormData();
           formData.append('file', file);
 
-          const response = await fetch('/api/upload-and-analyze', {
+          const response = await fetch(`${API_BASE_URL}/upload-and-analyze`, {
             method: 'POST',
             body: formData,
           });

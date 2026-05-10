@@ -17,7 +17,6 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 const DOUBAO_API_KEY = 'ark-39bf3f1b-08bc-4f29-b3ad-a4315e8b9153-f639d';
-const DOUBAO_ENDPOINT_ID = 'ep-20260510220258-bx5rk';
 
 app.use(cors());
 app.use(express.json());
@@ -133,96 +132,56 @@ function generateMockResult(text) {
 }
 
 async function analyzeDocumentWithDoubao(text) {
-  const endpoints = [
-    `https://ark.cn-beijing.volces.com/api/v3/bots/${DOUBAO_ENDPOINT_ID}/completions`,
-    `https://ark.cn-beijing.volces.com/api/v3/chat/completions`,
-    `https://api.doubao.com/v1/chat/completions`
-  ];
+  try {
+    const response = await fetch('https://ark.cn-beijing.volces.com/api/v3/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${DOUBAO_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: 'doubao-pro-32k',
+        messages: [
+          {
+            role: 'system',
+            content: '你是一位专业的招投标文件审核专家，擅长发现招标文件中的各类问题。请直接返回JSON格式的检查结果，不要添加任何解释性文字。'
+          },
+          {
+            role: 'user',
+            content: `请对以下招投标文件进行检查，返回JSON格式结果：\n\n${text.substring(0, 5000)}`
+          }
+        ],
+        temperature: 0.3,
+        response_format: { type: 'json_object' }
+      })
+    });
 
-  for (const endpoint of endpoints) {
-    try {
-      console.log(`尝试调用: ${endpoint}`);
-      
-      const body = endpoint.includes('/bots/') 
-        ? JSON.stringify({
-            messages: [
-              {
-                role: 'system',
-                content: '你是专业的招投标文件审核专家，请直接返回JSON格式检查结果。'
-              },
-              {
-                role: 'user',
-                content: `检查以下文档并返回JSON：${text.substring(0, 3000)}`
-              }
-            ],
-            temperature: 0.3
-          })
-        : JSON.stringify({
-            model: 'doubao-pro-32k',
-            messages: [
-              {
-                role: 'system',
-                content: '你是专业的招投标文件审核专家，请直接返回JSON格式检查结果。'
-              },
-              {
-                role: 'user',
-                content: `检查以下文档并返回JSON：${text.substring(0, 3000)}`
-              }
-            ],
-            temperature: 0.3
-          });
-
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${DOUBAO_API_KEY}`
-        },
-        body: body,
-        signal: AbortController.timeout(30000)
-      });
-
-      console.log(`HTTP状态码: ${response.status}`);
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error(`API失败: ${response.status} - ${errorText.substring(0, 200)}`);
-        continue;
-      }
-
-      const data = await response.json();
-      console.log('API返回成功');
-
-      let content = '';
-      if (data.choices && data.choices[0]) {
-        content = data.choices[0].message?.content || data.choices[0].text || '';
-      } else if (data.content) {
-        content = data.content;
-      }
-
-      if (!content) {
-        console.error('返回内容为空');
-        continue;
-      }
-
-      try {
-        return JSON.parse(content);
-      } catch {
-        const jsonMatch = content.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          return JSON.parse(jsonMatch[0]);
-        }
-        console.error('无法解析JSON:', content.substring(0, 100));
-        continue;
-      }
-
-    } catch (error) {
-      console.error(`调用失败 (${endpoint}):`, error.message);
+    if (!response.ok) {
+      console.error(`豆包API请求失败: ${response.status}`);
+      throw new Error(`API请求失败，使用模拟数据`);
     }
-  }
 
-  console.error('所有端点都失败，使用模拟数据');
-  return generateMockResult(text);
+    const data = await response.json();
+    
+    if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+      throw new Error('API返回格式异常');
+    }
+
+    const content = data.choices[0].message.content;
+    
+    try {
+      return JSON.parse(content);
+    } catch {
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        return JSON.parse(jsonMatch[0]);
+      }
+      throw new Error('无法解析JSON');
+    }
+  } catch (error) {
+    console.error('调用豆包API失败，使用模拟数据:', error.message);
+    return generateMockResult(text);
+  }
 }
 
 app.post('/api/upload', upload.single('file'), async (req, res) => {
@@ -291,7 +250,6 @@ app.post('/api/upload-and-analyze', upload.single('file'), async (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`后端服务运行在 http://localhost:${PORT}`);
-  console.log(`使用豆包Endpoint: ${DOUBAO_ENDPOINT_ID}`);
   console.log('API端点:');
   console.log('  POST /api/upload - 上传并解析文件');
   console.log('  POST /api/analyze - 使用豆包大模型分析文档');
