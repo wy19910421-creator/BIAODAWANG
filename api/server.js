@@ -121,7 +121,6 @@ function generateMockResult(text) {
     totalErrors,
     passRate,
     categories: [
-      { category: '系统提示', count: 1, percentage: Math.round((1 / totalErrors) * 100) },
       { category: '格式规范', count: errors.filter(e => e.category === '格式规范').length, percentage: Math.round((errors.filter(e => e.category === '格式规范').length / totalErrors) * 100) || 0 },
       { category: '条款逻辑', count: errors.filter(e => e.category === '条款逻辑').length, percentage: Math.round((errors.filter(e => e.category === '条款逻辑').length / totalErrors) * 100) || 0 },
       { category: '商务合规', count: errors.filter(e => e.category === '商务合规').length, percentage: Math.round((errors.filter(e => e.category === '商务合规').length / totalErrors) * 100) || 0 },
@@ -180,7 +179,7 @@ async function analyzeDocumentWithDoubao(text) {
           'Authorization': `Bearer ${DOUBAO_API_KEY}`
         },
         body: body,
-        timeout: 30000
+        signal: AbortController.timeout(30000)
       });
 
       console.log(`HTTP状态码: ${response.status}`);
@@ -290,15 +289,10 @@ app.post('/api/upload-and-analyze', upload.single('file'), async (req, res) => {
   }
 });
 
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', message: '服务正常运行', endpoint: DOUBAO_ENDPOINT_ID });
-});
-
 app.listen(PORT, () => {
   console.log(`后端服务运行在 http://localhost:${PORT}`);
   console.log(`使用豆包Endpoint: ${DOUBAO_ENDPOINT_ID}`);
   console.log('API端点:');
-  console.log('  GET  /api/health - 健康检查');
   console.log('  POST /api/upload - 上传并解析文件');
   console.log('  POST /api/analyze - 使用豆包大模型分析文档');
   console.log('  POST /api/upload-and-analyze - 一键上传+分析');
