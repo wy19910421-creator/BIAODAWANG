@@ -17,6 +17,7 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 const DOUBAO_API_KEY = 'ark-39bf3f1b-08bc-4f29-b3ad-a4315e8b9153-f639d';
+const DOUBAO_ENDPOINT_ID = 'ep-20260510220258-bx5rk';
 
 app.use(cors());
 app.use(express.json());
@@ -134,41 +135,57 @@ function generateMockResult(text) {
 
 async function analyzeDocumentWithDoubao(text) {
   try {
-    const response = await fetch('https://ark.cn-beijing.volces.com/api/v3/chat/completions', {
+    const response = await fetch(`https://ark.cn-beijing.volces.com/api/v3/bots/${DOUBAO_ENDPOINT_ID}/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${DOUBAO_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'doubao-pro-32k',
         messages: [
           {
             role: 'system',
-            content: '你是一位专业的招投标文件审核专家，擅长发现招标文件中的各类问题。请直接返回JSON格式的检查结果，不要添加任何解释性文字。'
+            content: '你是一位专业的招投标文件审核专家，擅长发现招标文件中的各类问题。请直接返回JSON格式的检查结果，不要添加任何解释性文字。格式：{"totalErrors":数字,"passRate":数字,"categories":[{"category":"类别名","count":数字,"percentage":数字}],"errors":[{"id":"1","type":"类型","category":"类别","position":{"line":数字,"column":数字},"description":"描述","suggestion":"建议","severity":"high/medium/low","legalBasis":"依据"}]}'
           },
           {
             role: 'user',
-            content: `请对以下招投标文件进行检查，返回JSON格式结果：\n\n${text.substring(0, 5000)}`
+            content: `你是一位专业的招投标文件审核专家。请对以下招投标文件进行全面检查，从6个维度识别问题：
+1. 格式规范检查（字体字号、章节编号、页码、标点符号）
+2. 条款逻辑冲突（前后矛盾、资质要求、付款方式）
+3. 商务合规检查（保证金、投标有效期、签字盖章）
+4. 技术参数检查（规格一致性、设备型号）
+5. 法规合规检查（法规时效性、资质合理性）
+6. 文案低级错误（错别字、标点混用）
+
+请直接返回JSON格式结果，不要添加任何markdown标记或解释性文字：
+
+文档内容：
+${text.substring(0, 8000)}`
           }
         ],
-        temperature: 0.3,
-        response_format: { type: 'json_object' }
+        temperature: 0.3
       })
     });
 
     if (!response.ok) {
-      console.error(`API请求失败: ${response.status}`);
-      throw new Error(`API请求失败，使用模拟数据`);
+      const errorText = await response.text();
+      console.error(`豆包API请求失败: ${response.status} - ${errorText}`);
+      throw new Error(`API请求失败 (${response.status})`);
     }
 
     const data = await response.json();
     
-    if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+    let content = '';
+    if (data.choices && data.choices[0] && data.choices[0].message) {
+      content = data.choices[0].message.content;
+    } else if (data.choices && data.choices[0] && data.choices[0].text) {
+      content = data.choices[0].text;
+    } else if (typeof data === 'object' && data.content) {
+      content = data.content;
+    } else {
+      console.error('豆包API返回格式异常:', JSON.stringify(data));
       throw new Error('API返回格式异常');
     }
-
-    const content = data.choices[0].message.content;
     
     try {
       return JSON.parse(content);
@@ -180,7 +197,7 @@ async function analyzeDocumentWithDoubao(text) {
       throw new Error('无法解析JSON');
     }
   } catch (error) {
-    console.error('调用API失败，使用模拟数据:', error.message);
+    console.error('调用豆包API失败，使用模拟数据:', error.message);
     return generateMockResult(text);
   }
 }
@@ -249,10 +266,16 @@ app.post('/api/upload-and-analyze', upload.single('file'), async (req, res) => {
   }
 });
 
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', message: '服务正常运行', endpoint: DOUBAO_ENDPOINT_ID });
+});
+
 app.listen(PORT, () => {
   console.log(`后端服务运行在 http://localhost:${PORT}`);
+  console.log(`使用豆包Endpoint: ${DOUBAO_ENDPOINT_ID}`);
   console.log('API端点:');
+  console.log('  GET  /api/health - 健康检查');
   console.log('  POST /api/upload - 上传并解析文件');
-  console.log('  POST /api/analyze - 使用大模型分析文档');
+  console.log('  POST /api/analyze - 使用豆包大模型分析文档');
   console.log('  POST /api/upload-and-analyze - 一键上传+分析');
 });
