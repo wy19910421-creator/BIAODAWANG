@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Upload, File, X, Eye, Trash2, FileText, CheckCircle, AlertCircle, ChevronRight, Shield } from 'lucide-react';
+import { Upload, File, Trash2, FileText, CheckCircle, AlertCircle, Shield, Brain } from 'lucide-react';
 import { Button } from '@/components/common/Button';
 import { Progress } from '@/components/common/Progress';
 import { useFileStore } from '@/stores/fileStore';
@@ -19,10 +19,11 @@ const ALLOWED_TYPES = [
 export function UploadPage() {
   const navigate = useNavigate();
   const { files, addFile, updateFile, removeFile } = useFileStore();
-  const { startCheck } = useCheckStore();
+  const { startCheck, updateProgress, setResults } = useCheckStore();
   const [isDragging, setIsDragging] = useState(false);
   const [isChecking, setIsChecking] = useState(false);
   const [checkProgress, setCheckProgress] = useState(0);
+  const [currentDimension, setCurrentDimension] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const formatFileSize = (bytes: number) => {
@@ -42,12 +43,12 @@ export function UploadPage() {
   };
 
   const handleFiles = useCallback(
-    (newFiles: FileList) => {
-      Array.from(newFiles).forEach((file) => {
+    async (newFiles: FileList) => {
+      for (const file of Array.from(newFiles)) {
         const error = validateFile(file);
         if (error) {
           toast.error(error);
-          return;
+          continue;
         }
 
         const uploadedFile: UploadedFile = {
@@ -62,13 +63,89 @@ export function UploadPage() {
 
         addFile(uploadedFile);
 
-        setTimeout(() => {
+        try {
+          setIsChecking(true);
+          startCheck();
+          setCheckProgress(10);
+          setCurrentDimension('解析文件');
+
+          const formData = new FormData();
+          formData.append('file', file);
+
+          const response = await fetch('/api/upload-and-analyze', {
+            method: 'POST',
+            body: formData,
+          });
+
+          if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || '文件处理失败');
+          }
+
+          setCheckProgress(30);
+          setCurrentDimension('提取文本');
+
+          const data = await response.json();
+          
+          if (!data.success) {
+            throw new Error(data.error || 'AI分析失败');
+          }
+
+          setCheckProgress(50);
+          setCurrentDimension('格式规范检查');
+          updateProgress(50, '格式规范');
+          
+          setCheckProgress(60);
+          setCurrentDimension('条款逻辑检查');
+          updateProgress(60, '条款逻辑');
+          
+          setCheckProgress(70);
+          setCurrentDimension('商务合规检查');
+          updateProgress(70, '商务合规');
+          
+          setCheckProgress(80);
+          setCurrentDimension('技术参数检查');
+          updateProgress(80, '技术参数');
+          
+          setCheckProgress(90);
+          setCurrentDimension('法规合规检查');
+          updateProgress(90, '法规合规');
+
+          toast.info('AI正在深度分析文档，请稍候...');
+
+          setCheckProgress(100);
+          setCurrentDimension('分析完成');
+          updateProgress(100, '文案错误' as any);
+
+          const { totalErrors, passRate, categories, errors } = data.result;
+          
+          setResults(
+            errors.map((e: any, idx: number) => ({ 
+              ...e, 
+              id: String(idx + 1),
+              category: e.category
+            })),
+            totalErrors,
+            passRate,
+            categories
+          );
+
           updateFile(uploadedFile.id, { status: 'uploaded', progress: 100 });
-          toast.success(`${file.name} 上传成功`);
-        }, 1000);
-      });
+          toast.success(`检查完成！共发现 ${totalErrors} 处问题`);
+          
+          setTimeout(() => {
+            navigate('/check');
+          }, 500);
+        } catch (error: any) {
+          console.error('处理文件失败:', error);
+          updateFile(uploadedFile.id, { status: 'error' });
+          toast.error(error.message || '文件处理失败');
+        } finally {
+          setIsChecking(false);
+        }
+      }
     },
-    [addFile, updateFile]
+    [addFile, updateFile, navigate, startCheck, updateProgress, setResults]
   );
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -101,34 +178,6 @@ export function UploadPage() {
     [handleFiles]
   );
 
-  const handleStartCheck = () => {
-    if (files.length === 0) {
-      toast.warning('请先上传文件');
-      return;
-    }
-
-    setIsChecking(true);
-    setCheckProgress(0);
-    startCheck();
-
-    const dimensions = ['格式规范', '条款逻辑', '商务合规', '技术参数', '法规合规', '文案错误'];
-    let currentProgress = 0;
-
-    const interval = setInterval(() => {
-      currentProgress += Math.random() * 15 + 5;
-      if (currentProgress >= 100) {
-        currentProgress = 100;
-        clearInterval(interval);
-        setTimeout(() => {
-          setIsChecking(false);
-          toast.success('检查完成！共发现 23 处问题');
-          navigate('/check');
-        }, 500);
-      }
-      setCheckProgress(Math.min(currentProgress, 100));
-    }, 300);
-  };
-
   const uploadedFiles = files.filter((f) => f.status === 'uploaded');
 
   return (
@@ -144,12 +193,25 @@ export function UploadPage() {
             <p className="text-gray-600 mt-2">支持 Word (.doc/.docx) 和 PDF 格式，单个文件不超过50MB</p>
           </div>
 
+          <div className="mb-6 bg-gradient-to-r from-accent/10 to-primary/10 border border-accent/20 rounded-lg p-6">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 bg-green-100 rounded-xl flex items-center justify-center">
+                <Brain className="w-6 h-6 text-green-600" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-gray-900">AI智能分析</h3>
+                <p className="text-sm text-gray-600">上传文件后，大模型将自动进行六维度深度检查</p>
+              </div>
+            </div>
+          </div>
+
           <div
             className={cn(
               'relative border-2 border-dashed rounded-xl p-12 text-center transition-all duration-200',
               isDragging
                 ? 'border-accent bg-accent/5 scale-[1.02]'
-                : 'border-gray-300 bg-white hover:border-accent/50'
+                : 'border-gray-300 bg-white hover:border-accent/50',
+              isChecking && 'pointer-events-none opacity-50'
             )}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
@@ -159,9 +221,9 @@ export function UploadPage() {
               ref={fileInputRef}
               type="file"
               accept=".doc,.docx,.pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf"
-              multiple
               className="hidden"
               onChange={handleFileSelect}
+              disabled={isChecking}
             />
 
             <div className="w-20 h-20 mx-auto mb-6 bg-gradient-to-br from-accent/10 to-accent/5 rounded-full flex items-center justify-center">
@@ -169,22 +231,60 @@ export function UploadPage() {
             </div>
 
             <h3 className="text-xl font-semibold text-gray-900 mb-2">
-              拖拽文件到此处
+              {isChecking ? 'AI正在分析文档...' : '拖拽文件到此处'}
             </h3>
-            <p className="text-gray-500 mb-6">或点击下方按钮选择文件</p>
+            <p className="text-gray-500 mb-6">
+              {isChecking ? '请稍候，大模型正在深度分析您的招投标文件' : '或点击下方按钮选择文件'}
+            </p>
 
-            <Button
-              variant="primary"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isChecking}
-            >
-              选择文件
-            </Button>
+            {!isChecking && (
+              <Button
+                variant="primary"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isChecking}
+              >
+                选择文件
+              </Button>
+            )}
 
             <p className="mt-4 text-sm text-gray-400">
               支持 .doc、.docx、.pdf 格式
             </p>
           </div>
+
+          {isChecking && (
+            <div className="mt-8 bg-white rounded-lg border border-gray-200 p-6">
+              <div className="flex items-center gap-4 mb-4">
+                <div className="w-10 h-10 bg-accent/10 rounded-full flex items-center justify-center">
+                  <Brain className="w-5 h-5 text-green-600 animate-pulse" />
+                </div>
+                <div className="flex-1">
+                  <div className="font-medium text-gray-900">AI智能检查进行中...</div>
+                  <div className="text-sm text-gray-500 mt-1">
+                    {currentDimension || '准备中'}
+                  </div>
+                </div>
+              </div>
+              <Progress value={checkProgress} showLabel size="lg" />
+              <div className="mt-4 flex flex-wrap gap-2">
+                {['解析文件', '提取文本', '格式规范', '条款逻辑', '商务合规', '技术参数', '法规合规', '文案分析'].map(
+                  (dim, idx) => (
+                    <span
+                      key={dim}
+                      className={cn(
+                        'px-3 py-1 text-xs rounded-full transition-colors',
+                        checkProgress >= (idx + 1) * 12.5
+                          ? 'bg-success/10 text-success'
+                          : 'bg-gray-100 text-gray-500'
+                      )}
+                    >
+                      {dim}
+                    </span>
+                  )
+                )}
+              </div>
+            </div>
+          )}
 
           {files.length > 0 && (
             <div className="mt-8">
@@ -195,7 +295,7 @@ export function UploadPage() {
                 {files.some((f) => f.status === 'uploading') && (
                   <div className="flex items-center gap-2 text-sm text-accent">
                     <div className="w-4 h-4 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-                    上传中...
+                    处理中...
                   </div>
                 )}
               </div>
@@ -233,12 +333,12 @@ export function UploadPage() {
                       {file.status === 'uploaded' ? (
                         <span className="flex items-center gap-1 text-sm text-success">
                           <CheckCircle className="w-4 h-4" />
-                          已上传
+                          已处理
                         </span>
                       ) : file.status === 'error' ? (
                         <span className="flex items-center gap-1 text-sm text-error">
                           <AlertCircle className="w-4 h-4" />
-                          上传失败
+                          失败
                         </span>
                       ) : null}
 
@@ -256,56 +356,6 @@ export function UploadPage() {
             </div>
           )}
 
-          {isChecking && (
-            <div className="mt-8 bg-white rounded-lg border border-gray-200 p-6">
-              <div className="flex items-center gap-4 mb-4">
-                <div className="w-10 h-10 bg-accent/10 rounded-full flex items-center justify-center">
-                  <File className="w-5 h-5 text-accent animate-pulse" />
-                </div>
-                <div className="flex-1">
-                  <div className="font-medium text-gray-900">智能检查进行中...</div>
-                  <div className="text-sm text-gray-500 mt-1">
-                    正在检查 {uploadedFiles[0]?.name}
-                  </div>
-                </div>
-              </div>
-              <Progress value={checkProgress} showLabel size="lg" />
-              <div className="mt-4 flex flex-wrap gap-2">
-                {['格式规范', '条款逻辑', '商务合规', '技术参数', '法规合规', '文案错误'].map(
-                  (dim) => (
-                    <span
-                      key={dim}
-                      className={cn(
-                        'px-3 py-1 text-xs rounded-full transition-colors',
-                        checkProgress >=
-                          ['格式规范', '条款逻辑', '商务合规', '技术参数', '法规合规', '文案错误'].indexOf(dim) *
-                            16.67
-                          ? 'bg-success/10 text-success'
-                          : 'bg-gray-100 text-gray-500'
-                      )}
-                    >
-                      {dim}
-                    </span>
-                  )
-                )}
-              </div>
-            </div>
-          )}
-
-          <div className="mt-8 flex justify-end">
-            <Button
-              variant="warning"
-              size="lg"
-              onClick={handleStartCheck}
-              disabled={uploadedFiles.length === 0 || isChecking}
-              isLoading={isChecking}
-              className="min-w-[200px]"
-            >
-              {isChecking ? '检查中...' : '开始检查'}
-              {!isChecking && <ChevronRight className="w-5 h-5 ml-1" />}
-            </Button>
-          </div>
-
           <div className="mt-12 bg-primary/5 rounded-lg p-6 border border-primary/10">
             <h3 className="font-semibold text-primary mb-3">温馨提示</h3>
             <ul className="space-y-2 text-sm text-gray-600">
@@ -315,11 +365,11 @@ export function UploadPage() {
               </li>
               <li className="flex items-start gap-2">
                 <CheckCircle className="w-4 h-4 text-success flex-shrink-0 mt-0.5" />
-                <span>系统会自动识别文件行业类型，选择对应的检查规则</span>
+                <span>大模型会从六大维度进行全面分析：格式、逻辑、合规、技术、法规、文案</span>
               </li>
               <li className="flex items-start gap-2">
                 <CheckCircle className="w-4 h-4 text-success flex-shrink-0 mt-0.5" />
-                <span>您的文件采用加密存储，不会泄露给任何第三方</span>
+                <span>您的文件仅用于本次检查，不会保存到服务器</span>
               </li>
             </ul>
           </div>
